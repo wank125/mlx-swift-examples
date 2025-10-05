@@ -2,6 +2,7 @@
 
 import AVKit
 import AsyncAlgorithms
+import AVFoundation
 import CoreImage
 import MLX
 import MLXLMCommon
@@ -36,6 +37,8 @@ struct ContentView: View {
 
     @State private var keyboardHeight: CGFloat = 0
     @State private var showPromptTemplates = false
+    @State private var showShareSheet = false
+    @State private var isSpeaking = false
     
     // Prompt templates
     private let promptTemplates = [
@@ -343,14 +346,45 @@ struct ContentView: View {
             ScrollView(.vertical) {
                 ScrollViewReader { sp in
                     VStack(alignment: .leading, spacing: 16) {
-                        Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
-                            .textSelection(.enabled)
-                            .font(.body)
-                            .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
-                            .accessibilityHint(llm.output.isEmpty ? "输入提示词后点击生成按钮" : "可以复制生成的文本")
-                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        VStack(alignment: .leading, spacing: 12) {
+                            // Output text
+                            Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
+                                .textSelection(.enabled)
+                                .font(.body)
+                                .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
+                                .accessibilityHint(llm.output.isEmpty ? "输入提示词后点击生成按钮" : "可以复制生成的文本")
+                                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+
+                            // Output actions
+                            if !llm.output.isEmpty && !llm.output.hasPrefix("❌") {
+                                HStack(spacing: 20) {
+                                    // Share button
+                                    Button {
+                                        showShareSheet = true
+                                    } label: {
+                                        Label("分享", systemImage: "square.and.arrow.up")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                    }
+                                    .accessibilityLabel("分享文本")
+                                    .accessibilityHint("点击分享生成的文本")
+
+                                    // Speak button
+                                    Button {
+                                        toggleSpeech()
+                                    } label: {
+                                        Label(isSpeaking ? "停止朗读" : "朗读", systemImage: isSpeaking ? "speaker.wave.3.fill" : "speaker.wave.2")
+                                            .font(.caption)
+                                            .foregroundColor(isSpeaking ? .red : .green)
+                                    }
+                                    .accessibilityLabel(isSpeaking ? "停止朗读" : "朗读文本")
+                                    .accessibilityHint(isSpeaking ? "点击停止朗读" : "点击朗读生成的文本")
+                                }
+                                .padding(.top, 8)
+                            }
+                        }
                         
                         // Error retry button
                         if llm.output.hasPrefix("❌") && !llm.running {
@@ -503,7 +537,7 @@ struct ContentView: View {
                     HStack {
                         Image(systemName: "info.circle.fill")
                             .foregroundColor(.blue)
-                        Text("Memory")
+                        Text("内存")
                             .font(.caption2)
                             .fontWeight(.medium)
                     }
@@ -531,7 +565,7 @@ struct ContentView: View {
                         copyToClipboard(llm.output)
                     }
                 } label: {
-                    Label("Copy Output", systemImage: "doc.on.doc.fill")
+                    Label("复制输出", systemImage: "doc.on.doc.fill")
                 }
                 .disabled(llm.output == "")
                 .labelStyle(.titleAndIcon)
@@ -559,6 +593,9 @@ struct ContentView: View {
             }
         }
         #endif
+        .sheet(isPresented: $showShareSheet) {
+            ActivityViewController(activityItems: [llm.output])
+        }
     }
 
     private func generate() {
@@ -700,6 +737,41 @@ struct ContentView: View {
         #else
             UIPasteboard.general.string = string
         #endif
+    }
+
+    private func toggleSpeech() {
+        if isSpeaking {
+            stopSpeaking()
+        } else {
+            speakText(llm.output)
+        }
+    }
+
+    private func speakText(_ text: String) {
+        guard !text.isEmpty else { return }
+
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.rate = 0.5 // 适中语速
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = 1.0
+
+        let synthesizer = AVSpeechSynthesizer()
+        synthesizer.speak(utterance)
+
+        isSpeaking = true
+
+        // 简单的延迟重置状态
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(text.count) * 0.1) {
+            isSpeaking = false
+        }
+    }
+
+    private func stopSpeaking() {
+        // 创建一个synthesizer实例来停止所有语音
+        let synthesizer = AVSpeechSynthesizer()
+        synthesizer.stopSpeaking(at: .immediate)
+        isSpeaking = false
     }
 }
 
@@ -1394,3 +1466,33 @@ struct ModelLoadingProgressView: View {
         .accessibilityValue("\(Int(progress * 100))%已完成")
     }
 }
+
+#if os(iOS) || os(visionOS)
+struct ActivityViewController: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#else
+struct ActivityViewController: NSViewRepresentable {
+    let activityItems: [Any]
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+
+        DispatchQueue.main.async {
+            // 使用正确的NSSharingService初始化方法
+            let sharingServicePicker = NSSharingServicePicker(items: activityItems)
+            sharingServicePicker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+        }
+
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+#endif
