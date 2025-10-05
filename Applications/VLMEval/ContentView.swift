@@ -571,10 +571,10 @@ struct ContentView: View {
                         copyToClipboard(llm.output)
                     }
                 } label: {
-                    Label("复制输出", systemImage: "doc.on.doc.fill")
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.title3)
                 }
                 .disabled(llm.output == "")
-                .labelStyle(.titleAndIcon)
             }
         }
         .padding(.bottom, keyboardHeight)
