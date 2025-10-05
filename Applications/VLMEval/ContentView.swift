@@ -54,17 +54,17 @@ struct ContentView: View {
         case (false, false, false):
             return "开始生成"
         case (true, false, false):
-            return "自动识别图片"
+            return "识别图片"
         case (false, true, false):
-            return "自动分析视频"
+            return "分析视频"
         case (false, false, true):
-            return "仅对话模式"
+            return "纯对话"
         case (true, false, true):
-            return "基于图片回答"
+            return "图片对话"
         case (false, true, true):
-            return "基于视频回答"
+            return "视频对话"
         case (true, true, false):
-            return "识别多媒体"
+            return "多媒体分析"
         case (true, true, true):
             return "智能分析"
         }
