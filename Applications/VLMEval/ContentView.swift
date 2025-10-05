@@ -914,7 +914,7 @@ class VLMEvaluator {
                             self.stat = "\(speed) t/s"
                             
                             // Update progress
-                            self.currentTokens = completion.tokensGenerated
+                            self.currentTokens = completion.tokensGenerated ?? 0
                             self.tokensPerSecond = completion.tokensPerSecond
                         }
                     }
