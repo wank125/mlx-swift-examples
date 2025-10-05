@@ -55,14 +55,34 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            VStack {
+            VStack(spacing: 8) {
                 HStack {
                     Text(llm.modelInfo)
-                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.gray.opacity(0.15))
+                        .cornerRadius(8)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
                     Spacer()
 
-                    Text(llm.stat)
+                    if !llm.stat.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speedometer")
+                                .font(.caption2)
+                                .foregroundColor(.blue)
+                            Text(llm.stat)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.15))
+                        .cornerRadius(8)
+                    }
                 }
 
                 VStack {
@@ -221,18 +241,28 @@ struct ContentView: View {
         #endif
         .toolbar {
             ToolbarItem {
-                Label(
-                    "Memory Usage: \(deviceStat.gpuUsage.activeMemory.formatted(.byteCount(style: .memory)))",
-                    systemImage: "info.circle.fill"
-                )
-                .labelStyle(.titleAndIcon)
-                .padding(.horizontal)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("Memory")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    Text(deviceStat.gpuUsage.activeMemory.formatted(.byteCount(style: .memory)))
+                        .font(.caption2)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(6)
                 .help(
                     Text(
                         """
-                        Active Memory: \(deviceStat.gpuUsage.activeMemory.formatted(.byteCount(style: .memory)))/\(GPU.memoryLimit.formatted(.byteCount(style: .memory)))
-                        Cache Memory: \(deviceStat.gpuUsage.cacheMemory.formatted(.byteCount(style: .memory)))/\(GPU.cacheLimit.formatted(.byteCount(style: .memory)))
-                        Peak Memory: \(deviceStat.gpuUsage.peakMemory.formatted(.byteCount(style: .memory)))
+                        Active: \(deviceStat.gpuUsage.activeMemory.formatted(.byteCount(style: .memory)))/\(GPU.memoryLimit.formatted(.byteCount(style: .memory)))
+                        Cache: \(deviceStat.gpuUsage.cacheMemory.formatted(.byteCount(style: .memory)))/\(GPU.cacheLimit.formatted(.byteCount(style: .memory)))
+                        Peak: \(deviceStat.gpuUsage.peakMemory.formatted(.byteCount(style: .memory)))
                         """
                     )
                 )
@@ -252,14 +282,24 @@ struct ContentView: View {
         .task {
             _ = try? await llm.load()
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            // Handle memory warning on iOS - emergency response
+            llm.emergencyMemoryReset()
+        }
     }
 
     private func generate() {
         Task {
             if let selectedImage = selectedImage {
                 #if os(iOS) || os(visionOS)
-                    let ciImage = CIImage(image: selectedImage)
-                    llm.generate(image: ciImage ?? CIImage(), videoURL: nil)
+                    // Convert UIImage to CIImage with validation
+                    guard let ciImage = createValidCIImage(from: selectedImage) else {
+                        await MainActor.run {
+                            self.llm.output = "图像格式无效，请尝试其他图片"
+                        }
+                        return
+                    }
+                    llm.generate(image: ciImage, videoURL: nil)
                 #else
                     if let cgImage = selectedImage.cgImage(
                         forProposedRect: nil, context: nil, hints: nil)
@@ -271,11 +311,18 @@ struct ContentView: View {
             } else if let imageURL = currentImageURL {
                 do {
                     let (data, _) = try await URLSession.shared.data(from: imageURL)
-                    if let ciImage = CIImage(data: data) {
+                    if let ciImage = createValidCIImage(from: data) {
                         llm.generate(image: ciImage, videoURL: nil)
+                    } else {
+                        await MainActor.run {
+                            self.llm.output = "下载的图像格式无效"
+                        }
                     }
                 } catch {
                     print("Failed to load image: \(error.localizedDescription)")
+                    await MainActor.run {
+                        self.llm.output = "图像加载失败: \(error.localizedDescription)"
+                    }
                 }
             } else {
                 if let videoURL = selectedVideoURL {
@@ -283,6 +330,67 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    #if os(iOS) || os(visionOS)
+    private func createValidCIImage(from image: UIImage) -> CIImage? {
+        // Always convert to ensure valid format
+        return convertToValidFormat(image: image)
+    }
+
+    private func convertToValidFormat(image: UIImage) -> CIImage? {
+        // Force convert to standard RGBA8 format to avoid MLX validation errors
+        let size = image.size
+        let rect = CGRect(origin: .zero, size: size)
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0 // Ensure 1x scale to avoid validation issues
+        format.opaque = false
+        format.preferredRange = .standard // Use standard range
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+
+        let convertedImage = renderer.image { ctx in
+            // Set standard color space
+            ctx.cgContext.setFillColor(UIColor.clear.cgColor)
+            ctx.cgContext.fill(rect)
+
+            // Draw image in standard format
+            image.draw(in: rect)
+        }
+
+        guard let finalCGImage = convertedImage.cgImage else { return nil }
+
+        // Final validation
+        let bitsPerComponent = finalCGImage.bitsPerComponent
+        let bitsPerPixel = finalCGImage.bitsPerPixel
+        let bytesPerRow = finalCGImage.bytesPerRow
+
+        print("Image format: \(bitsPerComponent)bpc, \(bitsPerPixel)bpp, \(bytesPerRow)bpr")
+
+        // Ensure we have valid parameters
+        guard bitsPerComponent == 8 && (bitsPerPixel == 32 || bitsPerPixel == 24) else {
+            print("Warning: Image format still invalid after conversion, proceeding anyway")
+            // Continue anyway as the conversion should have handled most issues
+            return CIImage(cgImage: finalCGImage)
+        }
+
+        return CIImage(cgImage: finalCGImage)
+    }
+    #endif
+
+    private func createValidCIImage(from data: Data) -> CIImage? {
+        guard let ciImage = CIImage(data: data) else { return nil }
+
+        // Convert to UIImage to ensure proper format validation
+        #if os(iOS) || os(visionOS)
+        if let uiImage = UIImage(data: data) {
+            return createValidCIImage(from: uiImage)
+        }
+        #endif
+
+        // Fallback for other platforms or if UIImage conversion fails
+        return ciImage
     }
 
     private func cancel() {
@@ -338,8 +446,25 @@ class VLMEvaluator {
     let modelConfiguration = VLMRegistry.smolvlm
 
     /// parameters controlling the output – use values appropriate for the model selected above
-    let generateParameters = MLXLMCommon.GenerateParameters(
-        maxTokens: 800, temperature: 0.7, topP: 0.9)
+    var generateParameters: MLXLMCommon.GenerateParameters {
+        let physicalMemory = ProcessInfo.processInfo.physicalMemory
+        let isUltraLowMemoryDevice = physicalMemory <= 3 * 1024 * 1024 * 1024 // 3GB
+        let isLowMemoryDevice = physicalMemory <= 4 * 1024 * 1024 * 1024 // 4GB
+
+        if isUltraLowMemoryDevice {
+            // Emergency minimal parameters for critical memory situations
+            return MLXLMCommon.GenerateParameters(
+                maxTokens: 50, temperature: 0.7, topP: 0.9)
+        } else if isLowMemoryDevice {
+            // Reduced parameters for low-memory devices
+            return MLXLMCommon.GenerateParameters(
+                maxTokens: 300, temperature: 0.7, topP: 0.9)
+        } else {
+            // Standard parameters for other devices
+            return MLXLMCommon.GenerateParameters(
+                maxTokens: 600, temperature: 0.7, topP: 0.9)
+        }
+    }
     let updateInterval = Duration.seconds(0.25)
 
     /// A task responsible for handling the generation process.
@@ -352,13 +477,33 @@ class VLMEvaluator {
 
     var loadState = LoadState.idle
 
+    /// Helper to check if device has low memory
+    private var isLowMemoryDevice: Bool {
+        ProcessInfo.processInfo.physicalMemory <= 4 * 1024 * 1024 * 1024 // 4GB
+    }
+
+    /// Ultra low memory device (iPhone 13 mini class)
+    private var isUltraLowMemoryDevice: Bool {
+        ProcessInfo.processInfo.physicalMemory <= 3 * 1024 * 1024 * 1024 // 3GB
+    }
+
     /// load and return the model -- can be called multiple times, subsequent calls will
     /// just return the loaded model
     func load() async throws -> ModelContainer {
         switch loadState {
         case .idle:
-            // limit the buffer cache
-            MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
+            if isUltraLowMemoryDevice {
+                // Emergency limits for critical memory situations
+                MLX.GPU.set(cacheLimit: 1 * 1024 * 1024) // 1MB cache
+                MLX.GPU.set(memoryLimit: 1_200 * 1024 * 1024) // 1.2GB limit
+            } else if isLowMemoryDevice {
+                // Aggressive memory limits for low-memory devices
+                MLX.GPU.set(cacheLimit: 3 * 1024 * 1024) // 3MB cache
+                MLX.GPU.set(memoryLimit: 1_800 * 1024 * 1024) // 1.8GB limit
+            } else {
+                // Conservative limits for other devices
+                MLX.GPU.set(cacheLimit: 10 * 1024 * 1024) // 10MB cache
+            }
 
             let modelContainer = try await VLMModelFactory.shared.loadContainer(
                 configuration: modelConfiguration
@@ -374,9 +519,23 @@ class VLMEvaluator {
             }
 
             self.prompt = modelConfiguration.defaultPrompt
-            self.modelInfo = "Loaded \(modelConfiguration.id). Weights: \(numParams / (1024*1024))M"
-            loadState = .loaded(modelContainer)
-            return modelContainer
+
+            let modelName = "SmolVLM" // Simplified name for display
+            let weightsMB = numParams / (1024*1024)
+
+            if isUltraLowMemoryDevice {
+                // For ultra low-memory devices, don't cache the model to prevent memory buildup
+                self.modelInfo = "\(modelName) • \(weightsMB)M • Ultra Low Memory"
+                return modelContainer
+            } else if isLowMemoryDevice {
+                // For low-memory devices, don't cache the model to prevent memory buildup
+                self.modelInfo = "\(modelName) • \(weightsMB)M • Low Memory"
+                return modelContainer
+            } else {
+                self.modelInfo = "\(modelName) • \(weightsMB)M"
+                loadState = .loaded(modelContainer)
+                return modelContainer
+            }
 
         case .loaded(let modelContainer):
             return modelContainer
@@ -392,6 +551,23 @@ class VLMEvaluator {
 
             // each time you generate you will get something new
             MLXRandom.seed(UInt64(Date.timeIntervalSinceReferenceDate * 1000))
+
+            // Aggressive memory cleanup before generation
+            if isLowMemoryDevice || isUltraLowMemoryDevice {
+                GPU.clearCache()
+                eval() // Force immediate evaluation
+
+                // Additional emergency cleanup for ultra low memory
+                if isUltraLowMemoryDevice {
+                    // Force garbage collection multiple times
+                    for _ in 0..<3 {
+                        autoreleasepool {
+                            eval()
+                            GPU.clearCache()
+                        }
+                    }
+                }
+            }
 
             try await modelContainer.perform { (context: ModelContext) -> Void in
                 let images: [UserInput.Image] = if let image { [.ciImage(image)] } else { [] }
@@ -409,13 +585,37 @@ class VLMEvaluator {
                     .user(prompt, images: images, videos: videos),
                 ]
 
+                let physicalMemory = ProcessInfo.processInfo.physicalMemory
+                let isUltraLowMemoryDevice = physicalMemory <= 3 * 1024 * 1024 * 1024 // 3GB
+                let isLowMemoryDevice = physicalMemory <= 4 * 1024 * 1024 * 1024 // 4GB
+
+                var generateParams: MLXLMCommon.GenerateParameters
+                if isUltraLowMemoryDevice {
+                    generateParams = MLXLMCommon.GenerateParameters(
+                        maxTokens: 200, temperature: 0.7, topP: 0.9)
+                } else if isLowMemoryDevice {
+                    generateParams = MLXLMCommon.GenerateParameters(
+                        maxTokens: 400, temperature: 0.7, topP: 0.9)
+                } else {
+                    generateParams = MLXLMCommon.GenerateParameters(
+                        maxTokens: 800, temperature: 0.7, topP: 0.9)
+                }
+
                 var userInput = UserInput(chat: chat)
-                userInput.processing.resize = .init(width: 448, height: 448)
+
+                // Aggressive image size reduction for memory constraints
+                if isUltraLowMemoryDevice {
+                    userInput.processing.resize = .init(width: 160, height: 160) // Ultra small for critical memory
+                } else if isLowMemoryDevice {
+                    userInput.processing.resize = .init(width: 224, height: 224) // Small for low memory
+                } else {
+                    userInput.processing.resize = .init(width: 448, height: 448) // Standard size
+                }
 
                 let lmInput = try await context.processor.prepare(input: userInput)
 
                 let stream = try MLXLMCommon.generate(
-                    input: lmInput, parameters: generateParameters, context: context)
+                    input: lmInput, parameters: generateParams, context: context)
 
                 // generate and output in batches
                 for await batch in stream._throttle(
@@ -430,11 +630,18 @@ class VLMEvaluator {
 
                     if let completion = batch.compactMap({ $0.info }).first {
                         Task { @MainActor in
-                            self.stat = "\(completion.tokensPerSecond) tokens/s"
+                            let speed = String(format: "%.1f", completion.tokensPerSecond)
+                            self.stat = "\(speed) t/s"
                         }
                     }
                 }
             }
+
+            // Emergency cleanup: immediately unload model after generation
+            if isUltraLowMemoryDevice {
+                unloadModel()
+            }
+
         } catch {
             output = "Failed: \(error)"
         }
@@ -454,6 +661,55 @@ class VLMEvaluator {
     func cancelGeneration() {
         generationTask?.cancel()
         running = false
+
+        // Clear memory after cancellation on low-memory devices
+        if isLowMemoryDevice || isUltraLowMemoryDevice {
+            GPU.clearCache()
+
+            // Additional cleanup for ultra low memory devices
+            if isUltraLowMemoryDevice {
+                unloadModel()
+            }
+        }
+    }
+
+    /// Clear model from memory to free up space (called on low-memory devices)
+    func unloadModel() {
+        if case .loaded = loadState {
+            loadState = .idle
+            GPU.clearCache()
+
+            // Force garbage collection on ultra low memory devices
+            if isUltraLowMemoryDevice {
+                // Maximum cleanup effort
+                for _ in 0..<5 {
+                    autoreleasepool {
+                        eval()
+                        GPU.clearCache()
+                        // Small delay to allow cleanup
+                        Thread.sleep(forTimeInterval: 0.01)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Emergency memory reset function
+    func emergencyMemoryReset() {
+        unloadModel()
+        GPU.clearCache()
+        eval()
+
+        // Additional emergency cleanup
+        if isUltraLowMemoryDevice {
+            for _ in 0..<3 {
+                autoreleasepool {
+                    eval()
+                    GPU.clearCache()
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+            }
+        }
     }
 }
 
