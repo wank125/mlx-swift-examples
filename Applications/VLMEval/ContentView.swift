@@ -58,6 +58,7 @@ struct ContentView: View {
 
     // Responsive height calculation
     private var imageDisplayHeight: CGFloat {
+        #if os(iOS) || os(visionOS)
         let screenHeight = UIScreen.main.bounds.height
 
         switch UIDevice.current.userInterfaceIdiom {
@@ -68,12 +69,32 @@ struct ContentView: View {
         default:
             return 300  // Default fallback
         }
+        #else
+        // macOS: use screen size or fixed height
+        if let screen = NSScreen.main {
+            let screenHeight = screen.visibleFrame.height
+            return min(400, screenHeight * 0.3)  // max 400px or 30% height
+        } else {
+            return 300  // Default fallback
+        }
+        #endif
     }
 
     private var outputAreaHeight: CGFloat {
+        #if os(iOS) || os(visionOS)
         let screenHeight = UIScreen.main.bounds.height
         let baseHeight = screenHeight - 600  // Subtract other components
         return max(150, baseHeight)  // Minimum 150px
+        #else
+        // macOS: use screen size or fixed height
+        if let screen = NSScreen.main {
+            let screenHeight = screen.visibleFrame.height
+            let baseHeight = screenHeight - 400  // Subtract other components (less on macOS)
+            return max(200, baseHeight)  // Minimum 200px
+        } else {
+            return 300  // Default fallback
+        }
+        #endif
     }
 
     @State private var selectedImage: PlatformImage? = nil {
@@ -373,12 +394,20 @@ struct ContentView: View {
                 }
             }
             .frame(minHeight: outputAreaHeight)
+            #if os(iOS) || os(visionOS)
             .background(Color(.systemBackground))
-            .cornerRadius(8)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color(.systemGray4), lineWidth: 1)
             )
+            #else
+            .background(Color(NSColor.controlBackgroundColor))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+            )
+            #endif
+            .cornerRadius(8)
 
             HStack {
                 // Prompt template button
@@ -408,7 +437,11 @@ struct ContentView: View {
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
+                    #if os(iOS) || os(visionOS)
                     .background(Color(.systemBackground))
+                    #else
+                    .background(Color(NSColor.textBackgroundColor))
+                    #endif
                     .cornerRadius(10)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
@@ -509,6 +542,7 @@ struct ContentView: View {
         .task {
             _ = try? await llm.load()
         }
+        #if os(iOS) || os(visionOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             // Handle memory warning on iOS - emergency response
             llm.emergencyMemoryReset()
@@ -524,6 +558,7 @@ struct ContentView: View {
                 keyboardHeight = 0
             }
         }
+        #endif
     }
 
     private func generate() {
@@ -894,7 +929,7 @@ class VLMEvaluator {
                 // Reset token counter
                 Task { @MainActor in
                     self.currentTokens = 0
-                    self.maxTokens = generateParams.maxTokens
+                    self.maxTokens = generateParams.maxTokens ?? 600 // Default fallback
                 }
 
                 // generate and output in batches
@@ -913,8 +948,10 @@ class VLMEvaluator {
                             let speed = String(format: "%.1f", completion.tokensPerSecond)
                             self.stat = "\(speed) t/s"
                             
-                            // Update progress
-                            self.currentTokens = completion.tokensGenerated ?? 0
+                            // Update progress - estimate based on current output
+                            let currentOutputLength = self.output.count
+                            let estimatedTokens = max(0, currentOutputLength / 4) // Rough estimate: 1 token ≈ 4 chars
+                            self.currentTokens = min(estimatedTokens, self.maxTokens)
                             self.tokensPerSecond = completion.tokensPerSecond
                         }
                     }
@@ -1139,9 +1176,11 @@ struct PromptTemplateSheet: View {
                 }
                 .padding(.vertical)
             }
+            #if os(iOS) || os(visionOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem {
                     Button("关闭") {
                         dismiss()
                     }
@@ -1186,7 +1225,11 @@ struct TemplateCard: View {
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
+            #if os(iOS) || os(visionOS)
             .background(Color(.secondarySystemBackground))
+            #else
+            .background(Color(NSColor.controlBackgroundColor))
+            #endif
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
