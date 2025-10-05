@@ -159,8 +159,9 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading) {
-            VStack(spacing: 8) {
+        VStack(spacing: 16) { // 增加主要区域间距
+            // 顶部信息区域
+            VStack(spacing: 12) {
                 HStack {
                     Text(llm.modelInfo)
                         .font(.caption)
@@ -386,6 +387,7 @@ struct ContentView: View {
                             Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
                                 .textSelection(.enabled)
                                 .font(.body)
+                                .lineSpacing(4) // 增加行间距提升可读性
                                 .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
@@ -534,9 +536,9 @@ struct ContentView: View {
                             .fontWeight(.semibold)
                             .font(.system(size: 14))
                     }
-                    .frame(minWidth: 80)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .frame(minWidth: 120)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
                     .background(
                         LinearGradient(
                             colors: llm.running ? [.red, .orange] : [.blue, .purple],
