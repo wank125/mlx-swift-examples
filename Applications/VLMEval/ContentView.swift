@@ -25,6 +25,28 @@ struct ContentView: View {
     @State var llm = VLMEvaluator()
     @Environment(DeviceStat.self) private var deviceStat
 
+    @State private var keyboardHeight: CGFloat = 0
+
+    // Responsive height calculation
+    private var imageDisplayHeight: CGFloat {
+        let screenHeight = UIScreen.main.bounds.height
+
+        switch UIDevice.current.userInterfaceIdiom {
+        case .phone:
+            return screenHeight * 0.28  // iPhone: 28% of screen height
+        case .pad:
+            return min(400, screenHeight * 0.35)  // iPad: max 400px or 35% height
+        default:
+            return 300  // Default fallback
+        }
+    }
+
+    private var outputAreaHeight: CGFloat {
+        let screenHeight = UIScreen.main.bounds.height
+        let baseHeight = screenHeight - 600  // Subtract other components
+        return max(150, baseHeight)  // Minimum 150px
+    }
+
     @State private var selectedImage: PlatformImage? = nil {
         didSet {
             if selectedImage != nil {
@@ -88,8 +110,9 @@ struct ContentView: View {
                 VStack {
                     if let player {
                         VideoPlayer(player: player)
-                            .frame(height: 300)
+                            .frame(height: imageDisplayHeight)
                             .cornerRadius(12)
+                            .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
                     } else if let selectedImage {
                         Group {
                             #if os(iOS) || os(visionOS)
@@ -101,21 +124,38 @@ struct ContentView: View {
                             #endif
                         }
                         .scaledToFit()
+                        .frame(maxHeight: imageDisplayHeight)
                         .cornerRadius(12)
-                        .frame(height: 300)
+                        .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
                     } else if let imageURL = currentImageURL {
                         AsyncImage(url: imageURL) { phase in
                             switch phase {
                             case .empty:
-                                ProgressView()
+                                VStack(spacing: 12) {
+                                    ProgressView()
+                                        .scaleEffect(1.2)
+                                    Text("加载图片中...")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(height: imageDisplayHeight * 0.6)
                             case .success(let image):
                                 image
                                     .resizable()
                                     .scaledToFit()
+                                    .frame(maxHeight: imageDisplayHeight)
                                     .cornerRadius(12)
-                                    .frame(height: 200)
+                                    .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
                             case .failure:
-                                Image(systemName: "photo.badge.exclamationmark")
+                                VStack(spacing: 8) {
+                                    Image(systemName: "photo.badge.exclamationmark")
+                                        .font(.largeTitle)
+                                        .foregroundColor(.red)
+                                    Text("图片加载失败")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(height: imageDisplayHeight * 0.6)
                             @unknown default:
                                 EmptyView()
                             }
@@ -130,7 +170,13 @@ struct ContentView: View {
                                     PHPickerFilter.images, PHPickerFilter.videos,
                                 ])
                             ) {
-                                Label("Select Image/Video", systemImage: "photo.badge.plus")
+                                Label("选择图片/视频", systemImage: "photo.badge.plus")
+                                    .font(.subheadline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(Color.blue.opacity(0.1))
+                                    .foregroundColor(.blue)
+                                    .cornerRadius(8)
                             }
                             .onChange(of: selectedItem) {
                                 Task {
@@ -185,9 +231,19 @@ struct ContentView: View {
                         #endif
 
                         if selectedImage != nil {
-                            Button("Clear", role: .destructive) {
+                            Button(role: .destructive) {
                                 selectedImage = nil
                                 selectedItem = nil
+                                player = nil
+                                selectedVideoURL = nil
+                            } label: {
+                                Label("清除", systemImage: "trash")
+                                    .font(.subheadline)
+                                    .padding(.vertical, 12)
+                                    .padding(.horizontal, 16)
+                                    .background(Color.red.opacity(0.1))
+                                    .foregroundColor(.red)
+                                    .cornerRadius(8)
                             }
                         }
                     }
@@ -206,27 +262,76 @@ struct ContentView: View {
 
             ScrollView(.vertical) {
                 ScrollViewReader { sp in
-                    Text(llm.output)
+                    Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
                         .textSelection(.enabled)
+                        .font(.body)
+                        .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
                         .onChange(of: llm.output) { _, _ in
-                            sp.scrollTo("bottom")
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                sp.scrollTo("bottom", anchor: .bottom)
+                            }
                         }
 
-                    Spacer()
+                    Spacer(minLength: 0)
                         .frame(width: 1, height: 1)
                         .id("bottom")
                 }
             }
-            .frame(minHeight: 200)
+            .frame(minHeight: outputAreaHeight)
+            .background(Color(.systemBackground))
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(.systemGray4), lineWidth: 1)
+            )
 
             HStack {
-                TextField("prompt", text: Bindable(llm).prompt)
+                TextField("输入提示词，如：描述这张图片...", text: Bindable(llm).prompt)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                    )
                     .onSubmit(generate)
                     .disabled(llm.running)
-                    #if os(visionOS)
-                        .textFieldStyle(.roundedBorder)
-                    #endif
-                Button(llm.running ? "stop" : "generate", action: llm.running ? cancel : generate)
+                Button(action: llm.running ? cancel : generate) {
+                    HStack(spacing: 6) {
+                        if llm.running {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.8)
+                        } else {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        Text(llm.running ? "停止" : "生成")
+                            .fontWeight(.semibold)
+                            .font(.system(size: 14))
+                    }
+                    .frame(minWidth: 80)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        LinearGradient(
+                            colors: llm.running ? [.red, .orange] : [.blue, .purple],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    .shadow(color: llm.running ? .red.opacity(0.3) : .blue.opacity(0.3), radius: 4, x: 0, y: 2)
+                    .scaleEffect(llm.running ? 0.95 : 1.0)
+                    .animation(.easeInOut(duration: 0.2), value: llm.running)
+                }
+                .disabled(llm.prompt.isEmpty && selectedImage == nil && selectedVideoURL == nil)
+                .opacity((llm.prompt.isEmpty && selectedImage == nil && selectedVideoURL == nil) ? 0.6 : 1.0)
             }
         }
         .onAppear {
@@ -279,12 +384,25 @@ struct ContentView: View {
                 .labelStyle(.titleAndIcon)
             }
         }
+        .padding(.bottom, keyboardHeight)
+        .animation(.easeOut(duration: 0.3), value: keyboardHeight)
         .task {
             _ = try? await llm.load()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
             // Handle memory warning on iOS - emergency response
             llm.emergencyMemoryReset()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { notification in
+            guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            withAnimation(.easeOut(duration: 0.3)) {
+                keyboardHeight = keyboardFrame.height
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.3)) {
+                keyboardHeight = 0
+            }
         }
     }
 
