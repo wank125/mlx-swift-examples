@@ -156,7 +156,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) { // 增加主要区域间距
+        VStack(spacing: 20) { // 增加主要区域间距
             // 顶部信息区域
             VStack(spacing: 12) {
                 HStack {
