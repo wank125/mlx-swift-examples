@@ -20,12 +20,41 @@ let videoSystemPrompt =
 let imageSystemPrompt =
     "You are an image understanding model capable of describing the salient features of any image."
 
+// Prompt template data structure
+struct PromptTemplate: Identifiable {
+    let id = UUID()
+    let title: String
+    let prompt: String
+    let icon: String
+    let category: String
+}
+
 struct ContentView: View {
 
     @State var llm = VLMEvaluator()
     @Environment(DeviceStat.self) private var deviceStat
 
     @State private var keyboardHeight: CGFloat = 0
+    @State private var showPromptTemplates = false
+    
+    // Prompt templates
+    private let promptTemplates = [
+        // 基础功能
+        PromptTemplate(title: "详细描述", prompt: "请详细描述这张图片中的所有内容，包括场景、物体、人物、颜色和氛围。", icon: "doc.text", category: "基础"),
+        PromptTemplate(title: "简短总结", prompt: "用一句话简短总结这张图片的主要内容。", icon: "text.quote", category: "基础"),
+        
+        // 实用功能
+        PromptTemplate(title: "识别文字", prompt: "请识别并提取图片中的所有文字内容，保持原有格式。", icon: "doc.plaintext", category: "实用"),
+        PromptTemplate(title: "物体识别", prompt: "列出图片中的所有物体，并说明它们的位置关系。", icon: "square.grid.3x3", category: "实用"),
+        
+        // 分析功能
+        PromptTemplate(title: "情感分析", prompt: "分析这张图片传达的情感、氛围和意境。", icon: "heart", category: "分析"),
+        PromptTemplate(title: "艺术风格", prompt: "描述这张图片的艺术风格、构图技巧和色彩运用。", icon: "paintbrush", category: "分析"),
+        
+        // 高级功能
+        PromptTemplate(title: "场景理解", prompt: "分析这个场景的地点、时间、天气和整体环境特征。", icon: "map", category: "高级"),
+        PromptTemplate(title: "动作描述", prompt: "描述图片中人物或物体的动作和姿态。", icon: "figure.walk", category: "高级"),
+    ]
 
     // Responsive height calculation
     private var imageDisplayHeight: CGFloat {
@@ -334,6 +363,29 @@ struct ContentView: View {
             )
 
             HStack {
+                // Prompt template button
+                Button {
+                    showPromptTemplates.toggle()
+                } label: {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.blue)
+                        .padding(12)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                }
+                .accessibilityLabel("提示词模板")
+                .accessibilityHint("点击查看预设的提示词模板")
+                .sheet(isPresented: $showPromptTemplates) {
+                    PromptTemplateSheet(
+                        templates: promptTemplates,
+                        onSelect: { template in
+                            llm.prompt = template.prompt
+                            showPromptTemplates = false
+                        }
+                    )
+                }
+                
                 TextField("输入提示词，如：描述这张图片...", text: Bindable(llm).prompt, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 12)
@@ -956,5 +1008,120 @@ struct SandboxFileTransfer {
 
         try FileManager.default.copyItem(at: sourceURL, to: sandboxURL)
         return sandboxURL
+    }
+}
+
+// Prompt Template Selection Sheet
+struct PromptTemplateSheet: View {
+    let templates: [PromptTemplate]
+    let onSelect: (PromptTemplate) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    // Group templates by category
+    private var groupedTemplates: [String: [PromptTemplate]] {
+        Dictionary(grouping: templates, by: { $0.category })
+    }
+    
+    private let categories = ["基础", "实用", "分析", "高级"]
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // Header
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("快速提示词模板")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        Text("选择预设模板快速开始")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    
+                    // Templates by category
+                    ForEach(categories, id: \.self) { category in
+                        if let categoryTemplates = groupedTemplates[category], !categoryTemplates.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text(category)
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal)
+                                
+                                LazyVGrid(columns: [
+                                    GridItem(.flexible(), spacing: 12),
+                                    GridItem(.flexible(), spacing: 12)
+                                ], spacing: 12) {
+                                    ForEach(categoryTemplates) { template in
+                                        TemplateCard(template: template) {
+                                            onSelect(template)
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("关闭") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        #if os(iOS)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        #endif
+    }
+}
+
+// Template Card Component
+struct TemplateCard: View {
+    let template: PromptTemplate
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Icon and Title
+                HStack(spacing: 12) {
+                    Image(systemName: template.icon)
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                        .frame(width: 32, height: 32)
+                    
+                    Text(template.title)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                }
+                
+                // Prompt preview
+                Text(template.prompt)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.blue.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(template.title)模板")
+        .accessibilityHint("点击使用: \(template.prompt)")
     }
 }
