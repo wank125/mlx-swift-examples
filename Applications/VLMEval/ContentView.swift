@@ -113,6 +113,8 @@ struct ContentView: View {
                             .frame(height: imageDisplayHeight)
                             .cornerRadius(12)
                             .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            .accessibilityLabel("视频播放器")
+                            .accessibilityHint("正在播放选中的视频")
                     } else if let selectedImage {
                         Group {
                             #if os(iOS) || os(visionOS)
@@ -127,6 +129,8 @@ struct ContentView: View {
                         .frame(maxHeight: imageDisplayHeight)
                         .cornerRadius(12)
                         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+                        .accessibilityLabel("已选择的图片")
+                        .accessibilityHint("双击可以选择新图片")
                     } else if let imageURL = currentImageURL {
                         AsyncImage(url: imageURL) { phase in
                             switch phase {
@@ -134,11 +138,13 @@ struct ContentView: View {
                                 VStack(spacing: 12) {
                                     ProgressView()
                                         .scaleEffect(1.2)
+                                        .accessibilityLabel("正在加载")
                                     Text("加载图片中...")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                                 .frame(height: imageDisplayHeight * 0.6)
+                                .accessibilityLabel("正在加载图片")
                             case .success(let image):
                                 image
                                     .resizable()
@@ -151,11 +157,13 @@ struct ContentView: View {
                                     Image(systemName: "photo.badge.exclamationmark")
                                         .font(.largeTitle)
                                         .foregroundColor(.red)
+                                        .accessibilityLabel("加载失败")
                                     Text("图片加载失败")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
                                 .frame(height: imageDisplayHeight * 0.6)
+                                .accessibilityLabel("图片加载失败")
                             @unknown default:
                                 EmptyView()
                             }
@@ -177,6 +185,8 @@ struct ContentView: View {
                                     .background(Color.blue.opacity(0.1))
                                     .foregroundColor(.blue)
                                     .cornerRadius(8)
+                                    .accessibilityLabel("选择图片或视频")
+                                    .accessibilityHint("点击选择要分析的图片或视频文件")
                             }
                             .onChange(of: selectedItem) {
                                 Task {
@@ -244,6 +254,8 @@ struct ContentView: View {
                                     .background(Color.red.opacity(0.1))
                                     .foregroundColor(.red)
                                     .cornerRadius(8)
+                                    .accessibilityLabel("清除选择的图片")
+                                    .accessibilityHint("点击清除当前选择的图片或视频")
                             }
                         }
                     }
@@ -268,6 +280,9 @@ struct ContentView: View {
                         .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
+                        .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
+                        .accessibilityHint(llm.output.isEmpty ? "输入提示词后点击生成按钮" : "可以复制生成的文本")
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                         .onChange(of: llm.output) { _, _ in
                             withAnimation(.easeOut(duration: 0.3)) {
                                 sp.scrollTo("bottom", anchor: .bottom)
@@ -288,7 +303,7 @@ struct ContentView: View {
             )
 
             HStack {
-                TextField("输入提示词，如：描述这张图片...", text: Bindable(llm).prompt)
+                TextField("输入提示词，如：描述这张图片...", text: Bindable(llm).prompt, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -298,6 +313,8 @@ struct ContentView: View {
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(Color.blue.opacity(0.3), lineWidth: 1)
                     )
+                    .accessibilityLabel("提示词输入框")
+                    .accessibilityHint("输入描述图片或视频的提示词，按回车键生成")
                     .onSubmit(generate)
                     .disabled(llm.running)
                 Button(action: llm.running ? cancel : generate) {
@@ -330,6 +347,8 @@ struct ContentView: View {
                     .scaleEffect(llm.running ? 0.95 : 1.0)
                     .animation(.easeInOut(duration: 0.2), value: llm.running)
                 }
+                .accessibilityLabel(llm.running ? "停止生成" : "开始生成")
+                .accessibilityHint(llm.running ? "点击停止当前生成任务" : "点击开始根据提示词生成内容")
                 .disabled(llm.prompt.isEmpty && selectedImage == nil && selectedVideoURL == nil)
                 .opacity((llm.prompt.isEmpty && selectedImage == nil && selectedVideoURL == nil) ? 0.6 : 1.0)
             }
