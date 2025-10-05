@@ -600,7 +600,7 @@ class VLMEvaluator {
         ProcessInfo.processInfo.physicalMemory <= 4 * 1024 * 1024 * 1024 // 4GB
     }
 
-    /// Ultra low memory device (iPhone 13 mini class)
+    /// Ultra low memory device (iPhone 12 mini class)
     private var isUltraLowMemoryDevice: Bool {
         ProcessInfo.processInfo.physicalMemory <= 3 * 1024 * 1024 * 1024 // 3GB
     }

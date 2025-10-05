@@ -24,7 +24,7 @@ private var isLowMemoryDevice: Bool {
     ProcessInfo.processInfo.physicalMemory <= 4 * 1024 * 1024 * 1024 // 4GB
 }
 
-/// Ultra low memory device (iPhone 13 mini class)
+/// Ultra low memory device (iPhone 12 mini class)
 private var isUltraLowMemoryDevice: Bool {
     ProcessInfo.processInfo.physicalMemory <= 3 * 1024 * 1024 * 1024 // 3GB
 }
@@ -32,7 +32,7 @@ private var isUltraLowMemoryDevice: Bool {
 
 **影响的设备:**
 - **4GB RAM设备** (被判定为低内存):
-  - iPhone 13 mini (4GB)
+  - iPhone 12 mini (4GB)
   - iPhone 12 系列 (4GB)
   - iPhone 11 Pro 系列 (4GB)
   

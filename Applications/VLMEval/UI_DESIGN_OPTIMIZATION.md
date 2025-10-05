@@ -25,7 +25,7 @@
 
 **影响的设备:**
 - iPhone SE (4.7" 屏幕): 300px占屏幕比例过大
-- iPhone 13 mini (5.4"): 布局拥挤
+- iPhone 12 mini (5.4"): 布局拥挤
 - iPhone 15 Pro Max (6.7"): 空间利用不充分
 - iPad: 显示效果不佳
 
