@@ -274,20 +274,51 @@ struct ContentView: View {
 
             ScrollView(.vertical) {
                 ScrollViewReader { sp in
-                    Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
-                        .textSelection(.enabled)
-                        .font(.body)
-                        .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
-                        .accessibilityHint(llm.output.isEmpty ? "输入提示词后点击生成按钮" : "可以复制生成的文本")
-                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                        .onChange(of: llm.output) { _, _ in
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                sp.scrollTo("bottom", anchor: .bottom)
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(llm.output.isEmpty ? "输入提示词开始生成..." : llm.output)
+                            .textSelection(.enabled)
+                            .font(.body)
+                            .foregroundColor(llm.output.isEmpty ? .secondary : .primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(llm.output.isEmpty ? "等待输入" : "生成结果")
+                            .accessibilityHint(llm.output.isEmpty ? "输入提示词后点击生成按钮" : "可以复制生成的文本")
+                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        
+                        // Error retry button
+                        if llm.output.hasPrefix("❌") && !llm.running {
+                            Button {
+                                llm.retryLastGeneration()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 14, weight: .medium))
+                                    Text("重试")
+                                        .fontWeight(.semibold)
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                                .background(
+                                    LinearGradient(
+                                        colors: [.orange, .red],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                .shadow(color: .orange.opacity(0.3), radius: 4, x: 0, y: 2)
                             }
+                            .accessibilityLabel("重试生成")
+                            .accessibilityHint("点击重新尝试上次失败的生成任务")
+                            .transition(.scale.combined(with: .opacity))
                         }
+                    }
+                    .padding()
+                    .onChange(of: llm.output) { _, _ in
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            sp.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
 
                     Spacer(minLength: 0)
                         .frame(width: 1, height: 1)
@@ -432,7 +463,7 @@ struct ContentView: View {
                     // Convert UIImage to CIImage with validation
                     guard let ciImage = createValidCIImage(from: selectedImage) else {
                         await MainActor.run {
-                            self.llm.output = "图像格式无效，请尝试其他图片"
+                            self.llm.output = "❌ 图像格式无效，请尝试其他图片（支持JPG, PNG等常见格式）"
                         }
                         return
                     }
@@ -452,13 +483,13 @@ struct ContentView: View {
                         llm.generate(image: ciImage, videoURL: nil)
                     } else {
                         await MainActor.run {
-                            self.llm.output = "下载的图像格式无效"
+                            self.llm.output = "❌ 下载的图像格式无效，请尝试其他图片"
                         }
                     }
                 } catch {
                     print("Failed to load image: \(error.localizedDescription)")
                     await MainActor.run {
-                        self.llm.output = "图像加载失败: \(error.localizedDescription)"
+                        self.llm.output = "❌ 图像加载失败: \(error.localizedDescription)"
                     }
                 }
             } else {
@@ -642,13 +673,28 @@ class VLMEvaluator {
                 MLX.GPU.set(cacheLimit: 10 * 1024 * 1024) // 10MB cache
             }
 
-            let modelContainer = try await VLMModelFactory.shared.loadContainer(
-                configuration: modelConfiguration
-            ) { [modelConfiguration] progress in
-                Task { @MainActor in
-                    self.modelInfo =
-                        "Downloading \(modelConfiguration.name): \(Int(progress.fractionCompleted * 100))%"
+            let modelContainer: ModelContainer
+            do {
+                modelContainer = try await VLMModelFactory.shared.loadContainer(
+                    configuration: modelConfiguration
+                ) { [modelConfiguration] progress in
+                    Task { @MainActor in
+                        let progressPercent = progress.fractionCompleted * 100
+                        self.modelInfo = "下载 \(modelConfiguration.name): \(Int(progressPercent))%"
+                    }
                 }
+            } catch {
+                await MainActor.run {
+                    switch error as NSError {
+                    case let error where error.localizedDescription.contains("download"):
+                        self.modelInfo = "❌ 下载失败: \(error.localizedDescription)"
+                    case let error where error.localizedDescription.contains("memory"):
+                        self.modelInfo = "❌ 内存不足: \(error.localizedDescription)"
+                    default:
+                        self.modelInfo = "❌ 模型加载失败: \(error.localizedDescription)"
+                    }
+                }
+                throw error // Re-throw to stop processing
             }
 
             let numParams = await modelContainer.perform { context in
@@ -780,17 +826,51 @@ class VLMEvaluator {
             }
 
         } catch {
-            output = "Failed: \(error)"
+            await MainActor.run {
+                switch error as NSError {
+                case let error where error.domain == "MLXError":
+                    self.output = "❌ 模型推理失败: \(error.localizedDescription)"
+                case let error where error.domain == "VLMError":
+                    self.output = "❌ 视觉模型错误: \(error.localizedDescription)"
+                case let error where error.localizedDescription.contains("memory"):
+                    self.output = "❌ 内存不足: \(error.localizedDescription)"
+                default:
+                    self.output = "❌ 生成失败: \(error.localizedDescription)"
+                }
+            }
         }
     }
 
+    // Store last generation parameters for retry
+    private var lastPrompt: String = ""
+    private var lastImage: CIImage? = nil
+    private var lastVideoURL: URL? = nil
+    
     func generate(image: CIImage?, videoURL: URL?) {
         guard !running else { return }
         let currentPrompt = prompt
         prompt = ""
+        
+        // Store for retry
+        lastPrompt = currentPrompt
+        lastImage = image
+        lastVideoURL = videoURL
+        
         generationTask = Task {
             running = true
             await generate(prompt: currentPrompt, image: image, videoURL: videoURL)
+            running = false
+        }
+    }
+    
+    /// Retry the last failed generation
+    func retryLastGeneration() {
+        guard !running else { return }
+        guard !lastPrompt.isEmpty else { return }
+        
+        generationTask = Task {
+            running = true
+            await generate(prompt: lastPrompt, image: lastImage, videoURL: lastVideoURL)
             running = false
         }
     }
