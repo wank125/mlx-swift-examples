@@ -301,6 +301,24 @@ struct ContentView: View {
                 }
             }
 
+            // Generation Progress View
+            if llm.running && llm.currentTokens > 0 {
+                GenerationProgressView(
+                    currentTokens: llm.currentTokens,
+                    maxTokens: llm.maxTokens,
+                    tokensPerSecond: llm.tokensPerSecond
+                )
+                .padding(.horizontal)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
+            // Model Loading Progress View
+            if llm.isLoading {
+                ModelLoadingProgressView(progress: llm.loadingProgress)
+                    .padding(.horizontal)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
             ScrollView(.vertical) {
                 ScrollViewReader { sp in
                     VStack(alignment: .leading, spacing: 16) {
@@ -660,6 +678,16 @@ class VLMEvaluator {
     var output = ""
     var modelInfo = ""
     var stat = ""
+    
+    // Generation progress tracking
+    var currentTokens: Int = 0
+    var maxTokens: Int = 0
+    var tokensPerSecond: Double = 0
+    
+    // Model loading progress
+    var loadingProgress: Double = 0
+    var isLoading: Bool = false
+    private var loadStartTime: Date?
 
     /// This controls which model loads. `smolvlm` is very small even unquantized, so it will fit on
     /// more devices.
@@ -712,6 +740,10 @@ class VLMEvaluator {
     func load() async throws -> ModelContainer {
         switch loadState {
         case .idle:
+            isLoading = true
+            loadStartTime = Date()
+            loadingProgress = 0
+            
             if isUltraLowMemoryDevice {
                 // Emergency limits for critical memory situations
                 MLX.GPU.set(cacheLimit: 1 * 1024 * 1024) // 1MB cache
@@ -732,11 +764,16 @@ class VLMEvaluator {
                 ) { [modelConfiguration] progress in
                     Task { @MainActor in
                         let progressPercent = progress.fractionCompleted * 100
-                        self.modelInfo = "下载 \(modelConfiguration.name): \(Int(progressPercent))%"
+                        self.loadingProgress = progress.fractionCompleted
+                        
+                        // Calculate estimated time remaining
+                        let estimatedTime = self.estimateRemainingTime(progress: progress.fractionCompleted)
+                        self.modelInfo = "下载 \(modelConfiguration.name): \(Int(progressPercent))% · \(estimatedTime)"
                     }
                 }
             } catch {
                 await MainActor.run {
+                    self.isLoading = false
                     switch error as NSError {
                     case let error where error.localizedDescription.contains("download"):
                         self.modelInfo = "❌ 下载失败: \(error.localizedDescription)"
@@ -748,6 +785,8 @@ class VLMEvaluator {
                 }
                 throw error // Re-throw to stop processing
             }
+            
+            isLoading = false
 
             let numParams = await modelContainer.perform { context in
                 context.model.numParameters()
@@ -852,6 +891,12 @@ class VLMEvaluator {
                 let stream = try MLXLMCommon.generate(
                     input: lmInput, parameters: generateParams, context: context)
 
+                // Reset token counter
+                Task { @MainActor in
+                    self.currentTokens = 0
+                    self.maxTokens = generateParams.maxTokens
+                }
+
                 // generate and output in batches
                 for await batch in stream._throttle(
                     for: updateInterval, reducing: Generation.collect)
@@ -867,6 +912,10 @@ class VLMEvaluator {
                         Task { @MainActor in
                             let speed = String(format: "%.1f", completion.tokensPerSecond)
                             self.stat = "\(speed) t/s"
+                            
+                            // Update progress
+                            self.currentTokens = completion.tokensGenerated
+                            self.tokensPerSecond = completion.tokensPerSecond
                         }
                     }
                 }
@@ -977,6 +1026,30 @@ class VLMEvaluator {
                     GPU.clearCache()
                     Thread.sleep(forTimeInterval: 0.01)
                 }
+            }
+        }
+    }
+    
+    /// Estimate remaining time for model loading
+    private func estimateRemainingTime(progress: Double) -> String {
+        guard let startTime = loadStartTime else { return "计算中..." }
+        guard progress > 0.01 else { return "计算中..." }
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        let estimatedTotal = elapsed / progress
+        let remaining = estimatedTotal - elapsed
+        
+        if remaining < 1 {
+            return "即将完成"
+        } else if remaining < 60 {
+            return "约\(Int(remaining))秒"
+        } else {
+            let minutes = Int(remaining / 60)
+            let seconds = Int(remaining.truncatingRemainder(dividingBy: 60))
+            if seconds == 0 {
+                return "约\(minutes)分钟"
+            } else {
+                return "约\(minutes)分\(seconds)秒"
             }
         }
     }
@@ -1123,5 +1196,158 @@ struct TemplateCard: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(template.title)模板")
         .accessibilityHint("点击使用: \(template.prompt)")
+    }
+}
+
+// Generation Progress View Component
+struct GenerationProgressView: View {
+    let currentTokens: Int
+    let maxTokens: Int
+    let tokensPerSecond: Double
+    
+    private var progress: Double {
+        guard maxTokens > 0 else { return 0 }
+        return Double(currentTokens) / Double(maxTokens)
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Progress Bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 6)
+                    
+                    // Progress Fill
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(
+                            LinearGradient(
+                                colors: [.blue, .purple],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * progress, height: 6)
+                        .animation(.easeInOut(duration: 0.3), value: progress)
+                }
+            }
+            .frame(height: 6)
+            
+            // Progress Info
+            HStack(spacing: 16) {
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.text")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                    Text("\(currentTokens)/\(maxTokens) tokens")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "gauge.with.dots.needle.67percent")
+                        .font(.caption2)
+                        .foregroundColor(.purple)
+                    Text("\(Int(progress * 100))%")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
+                }
+                
+                if tokensPerSecond > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "speedometer")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        Text(String(format: "%.1f t/s", tokensPerSecond))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color.blue.opacity(0.05))
+        .cornerRadius(8)
+        .accessibilityLabel("生成进度")
+        .accessibilityValue("\(Int(progress * 100))%已完成，已生成\(currentTokens)个token，共\(maxTokens)个")
+    }
+}
+
+// Model Loading Progress View Component  
+struct ModelLoadingProgressView: View {
+    let progress: Double
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            // Progress Bar with animation
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 8)
+                    
+                    // Animated Progress Fill
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            LinearGradient(
+                                colors: [.green, .blue],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * progress, height: 8)
+                        .animation(.easeInOut(duration: 0.3), value: progress)
+                        .overlay(
+                            // Shimmer effect
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.white.opacity(0),
+                                            Color.white.opacity(0.3),
+                                            Color.white.opacity(0)
+                                        ],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: 60)
+                                .offset(x: -30 + (geometry.size.width * progress))
+                        )
+                }
+            }
+            .frame(height: 8)
+            
+            // Loading Info
+            HStack {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("正在加载模型...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Text("\(Int(progress * 100))%")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+            }
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .background(Color.green.opacity(0.05))
+        .cornerRadius(10)
+        .accessibilityLabel("模型加载进度")
+        .accessibilityValue("\(Int(progress * 100))%已完成")
     }
 }
