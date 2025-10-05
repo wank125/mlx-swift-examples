@@ -39,7 +39,37 @@ struct ContentView: View {
     @State private var showPromptTemplates = false
     @State private var showShareSheet = false
     @State private var isSpeaking = false
-    
+
+    // Smart button title based on context
+    private var generateButtonTitle: String {
+        if llm.running {
+            return "停止"
+        }
+
+        let hasImage = selectedImage != nil
+        let hasVideo = selectedVideoURL != nil
+        let hasPrompt = !llm.prompt.isEmpty
+
+        switch (hasImage, hasVideo, hasPrompt) {
+        case (false, false, false):
+            return "开始生成"
+        case (true, false, false):
+            return "自动识别图片"
+        case (false, true, false):
+            return "自动分析视频"
+        case (false, false, true):
+            return "仅对话模式"
+        case (true, false, true):
+            return "基于图片回答"
+        case (false, true, true):
+            return "基于视频回答"
+        case (true, true, false):
+            return "识别多媒体"
+        case (true, true, true):
+            return "智能分析"
+        }
+    }
+
     // Prompt templates
     private let promptTemplates = [
         // 基础功能
@@ -143,6 +173,11 @@ struct ContentView: View {
                         .minimumScaleFactor(0.8)
 
                     Spacer()
+
+                    // Model capability hint
+                    Text("智能图像识别 • 自然语言对话")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
 
                     if !llm.stat.isEmpty {
                         HStack(spacing: 4) {
@@ -495,7 +530,7 @@ struct ContentView: View {
                             Image(systemName: "sparkles")
                                 .font(.system(size: 14, weight: .medium))
                         }
-                        Text(llm.running ? "停止" : "生成")
+                        Text(generateButtonTitle)
                             .fontWeight(.semibold)
                             .font(.system(size: 14))
                     }
