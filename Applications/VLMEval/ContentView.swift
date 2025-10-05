@@ -256,7 +256,8 @@ struct ContentView: View {
                         }
                     }
 
-                    HStack {
+                    // 操作按钮区域
+                    HStack(spacing: 16) {
                         #if os(iOS) || os(visionOS)
                             PhotosPicker(
                                 selection: $selectedItem,
@@ -264,15 +265,14 @@ struct ContentView: View {
                                     PHPickerFilter.images, PHPickerFilter.videos,
                                 ])
                             ) {
-                                Label("选择图片/视频", systemImage: "photo.badge.plus")
-                                    .font(.subheadline)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background(Color.blue.opacity(0.1))
+                                Image(systemName: "photo.badge.plus")
+                                    .font(.title2)
                                     .foregroundColor(.blue)
+                                    .frame(width: 44, height: 44)
+                                    .background(Color.blue.opacity(0.1))
                                     .cornerRadius(8)
-                                    .accessibilityLabel("选择图片或视频")
-                                    .accessibilityHint("点击选择要分析的图片或视频文件")
+                                    .accessibilityLabel("选择媒体文件")
+                                    .accessibilityHint("点击选择图片或视频文件进行分析")
                             }
                             .onChange(of: selectedItem) {
                                 Task {
